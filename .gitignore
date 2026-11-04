@@ -1,0 +1,49 @@
+/contexto
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+.venv_validation/
+env/
+.env
+
+# Whisper model weights (root-level cache only — do NOT match services/*/app/models/)
+/models/
+*.pt
+*.bin
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+.env.*
+secrets/
+
+# experiments/ raw results
+experiments/results/*
+!experiments/results/.gitkeep
+experiments/.venv/
+
+# experiments/ generated manifest — has machine-specific absolute paths into
+# a local corpus copy, not something to commit. manifest.example.csv stays.
+experiments/e1_dataset_characterization/manifest.csv
+CLAUDE.md

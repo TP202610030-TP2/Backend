@@ -1,0 +1,85 @@
+location: Canada Central
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: false
+      targetPort: 8000
+      transport: Auto
+  template:
+    containers:
+      - name: asr-service
+        image: ghcr.io/zrodrigochirinos/asr-service:latest
+        resources:
+          cpu: 2.0
+          memory: 4Gi
+        env:
+          - name: MODEL_ID
+            value: QuechuaBase/whisper-base-qxp-finetuned
+          - name: DEVICE
+            value: cpu
+          - name: ADAPTIVE_MODE
+            value: "true"
+          - name: AUTH_SERVICE_URL
+            value: http://auth-service
+          - name: TRANSCRIPTION_MANAGER_URL
+            value: http://transcription-manager
+          - name: MAX_CONCURRENT_CONNECTIONS
+            value: "100"
+          - name: STREAMING_PARTIAL_INTERVAL_SECONDS
+            value: "3"
+          - name: AUDIO_BUFFER_MAX_SECONDS
+            value: "600"
+          - name: PARTIAL_WINDOW_SECONDS
+            value: "10"
+          - name: SERVICE_NAME
+            value: asr-service
+          - name: AUTH_MODE
+            value: local
+          - name: JWT_SECRET_KEY
+            value: CHANGE_ME  # must equal auth-service's JWT_SECRET_KEY
+          - name: REDIS_URL
+            value: redis://redis:6379/0
+          # Jobs are consumed by the dedicated asr-worker app (KEDA-scaled on
+          # queue length); these replicas serve sync REST + streaming only.
+          - name: JOB_WORKER_ENABLED
+            value: "false"
+        # v2: liveness and readiness are different questions. A busy replica
+        # is NOT dead: it should stop receiving new traffic (readiness), not
+        # be restarted (liveness).
+        probes:
+          - type: Liveness
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: /ready
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 2
+          - type: Startup
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
+    # Horizontal autoscaling, complementing device_manager.py's vertical
+    # (in-process) adaptation — see docs/06-horizontal-autoscaling.md.
+    # Trigger is HTTP concurrency, not CPU%, because asr-service runs
+    # --workers 1 (module-global Whisper model) and each real transcription
+    # holds that single worker for 1-3s+ — 2 concurrent requests per replica
+    # is already a queue, not a CPU spike, so CPU-based scaling would react
+    # too late.
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "2"

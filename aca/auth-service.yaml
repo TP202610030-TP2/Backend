@@ -1,0 +1,68 @@
+location: Canada Central
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: false
+      targetPort: 8000
+      transport: Auto
+  template:
+    containers:
+      - name: auth-service
+        image: ghcr.io/zrodrigochirinos/auth-service:latest
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        env:
+          - name: DATABASE_URL
+            value: postgresql+asyncpg://pgadmin:CHANGE_ME@pg-asr-quechua.postgres.database.azure.com/auth_db?ssl=require
+          - name: JWT_SECRET_KEY
+            value: CHANGE_ME
+          - name: JWT_ALGORITHM
+            value: HS256
+          - name: JWT_EXPIRATION_HOURS
+            value: "24"
+          - name: BCRYPT_ROUNDS
+            value: "12"
+          - name: RATE_LIMIT_ATTEMPTS
+            value: "5"
+          - name: RATE_LIMIT_WINDOW_MINUTES
+            value: "15"
+          - name: RECOVERY_TOKEN_LENGTH
+            value: "32"
+          - name: RECOVERY_TOKEN_EXPIRY_HOURS
+            value: "1"
+          - name: SMTP_HOST
+            value: smtp.gmail.com
+          - name: SMTP_PORT
+            value: "587"
+          - name: SMTP_USER
+            value: CHANGE_ME
+          - name: SMTP_PASSWORD
+            value: CHANGE_ME
+          - name: SMTP_FROM
+            value: CHANGE_ME
+          - name: FRONTEND_URL
+            value: https://asr-quechua-frontend-b722a.web.app
+          - name: REDIS_URL
+            value: redis://redis:6379/0
+    # Horizontal autoscaling — added after E4 showed auth-service (fixed at
+    # 1 replica) becomes the real bottleneck under load: api-gateway calls
+    # POST /internal/auth/validate-token synchronously on every authenticated
+    # request (see services/api-gateway/app/api/dependencies.py), so this
+    # service is in the critical path for ALL traffic, not just auth
+    # endpoints. Threshold is higher than asr-service's (2) because
+    # auth-service runs --workers 4 (no module-global-model constraint) and
+    # validate-token does no bcrypt (that's login/register only) — each
+    # request is sub-100ms, so a replica can hold more concurrent requests
+    # before genuinely queueing. See docs/06-horizontal-autoscaling.md.
+    scale:
+      minReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-concurrency
+          http:
+            metadata:
+              concurrentRequests: "10"
