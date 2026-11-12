@@ -27,6 +27,8 @@ def _trans(user_id: str = "uid-1") -> MagicMock:
     t.processing_time = 1.2
     t.created_at = datetime.now(timezone.utc)
     t.word_confidences = []
+    t.device_used = "cpu"
+    t.compute_type = "fp32"
     return t
 
 
