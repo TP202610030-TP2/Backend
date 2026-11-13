@@ -1,17 +1,23 @@
-location: Canada Central
+# Plantilla: deploy.sh sustituye las ${VARIABLES} desde deploy/config.env.
+# Único punto de entrada público. ALLOWED_ORIGINS (lista JSON) define CORS:
+# cambiarla no requiere reconstruir la imagen, solo redesplegar esta app.
+location: ${LOCATION}
 type: Microsoft.App/containerApps
 properties:
-  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  managedEnvironmentId: ${ACA_ENV_ID}
   configuration:
     activeRevisionsMode: Single
     ingress:
       external: true
       targetPort: 8000
-      transport: Auto
+      transport: http
+    secrets:
+      - name: jwt-secret
+        value: "${JWT_SECRET}"
   template:
     containers:
       - name: api-gateway
-        image: ghcr.io/zrodrigochirinos/api-gateway:latest
+        image: ${REGISTRY}/api-gateway:${IMAGE_TAG}
         resources:
           cpu: 0.5
           memory: 1Gi
@@ -19,30 +25,26 @@ properties:
           - name: SERVICE_NAME
             value: api-gateway
           - name: AUTH_SERVICE_URL
-            value: http://auth-service
+            value: "${AUTH_SERVICE_URL}"
           - name: USER_SERVICE_URL
-            value: http://user-service
+            value: "${USER_SERVICE_URL}"
           - name: AUDIO_PROCESSOR_URL
-            value: http://audio-processor
+            value: "${AUDIO_PROCESSOR_URL}"
           - name: ASR_SERVICE_URL
-            value: http://asr-service
+            value: "${ASR_SERVICE_URL}"
           - name: TRANSCRIPTION_MANAGER_URL
-            value: http://transcription-manager
+            value: "${TRANSCRIPTION_MANAGER_URL}"
           # v2 (docs/09-arquitectura-v2.md): JWT validated in the gateway, so
           # auth-service is no longer on the critical path of every request.
           - name: AUTH_MODE
             value: local
           - name: JWT_SECRET_KEY
-            value: CHANGE_ME  # must equal auth-service's JWT_SECRET_KEY
-          - name: REDIS_URL
-            value: redis://redis:6379/0
-    # Horizontal autoscaling — api-gateway is the single public entry point,
-    # so 100% of traffic (including the validate-token round trip and the
-    # multipart audio forwarding) passes through it. Same --workers 4 /
-    # threshold reasoning as auth-service. See docs/06-horizontal-autoscaling.md.
+            secretRef: jwt-secret  # must equal auth-service's JWT_SECRET_KEY
+          - name: ALLOWED_ORIGINS
+            value: '${ALLOWED_ORIGINS}'
     scale:
-      minReplicas: 2  # v2: no cold start on the single public entry point
-      maxReplicas: 5
+      minReplicas: ${MIN_REPLICAS_GATEWAY}
+      maxReplicas: 2
       rules:
         - name: http-concurrency
           http:

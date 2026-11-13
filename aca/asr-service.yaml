@@ -1,17 +1,26 @@
-location: Canada Central
+# Plantilla: deploy.sh sustituye las ${VARIABLES} desde deploy/config.env.
+# Horizontal autoscaling on HTTP concurrency (not CPU%): asr-service runs
+# --workers 1 with a module-global Whisper model, so 2 concurrent requests per
+# replica is already a queue. See docs/06-horizontal-autoscaling.md.
+# El modelo va dentro de la imagen; con minReplicas 0 el primer request tras
+# estar inactivo paga el arranque en frío (carga del modelo).
+location: ${LOCATION}
 type: Microsoft.App/containerApps
 properties:
-  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  managedEnvironmentId: ${ACA_ENV_ID}
   configuration:
     activeRevisionsMode: Single
     ingress:
       external: false
       targetPort: 8000
-      transport: Auto
+      transport: http
+    secrets:
+      - name: jwt-secret
+        value: "${JWT_SECRET}"
   template:
     containers:
       - name: asr-service
-        image: ghcr.io/zrodrigochirinos/asr-service:latest
+        image: ${REGISTRY}/asr-service:${IMAGE_TAG}
         resources:
           cpu: 2.0
           memory: 4Gi
@@ -23,9 +32,9 @@ properties:
           - name: ADAPTIVE_MODE
             value: "true"
           - name: AUTH_SERVICE_URL
-            value: http://auth-service
+            value: "${AUTH_SERVICE_URL}"
           - name: TRANSCRIPTION_MANAGER_URL
-            value: http://transcription-manager
+            value: "${TRANSCRIPTION_MANAGER_URL}"
           - name: MAX_CONCURRENT_CONNECTIONS
             value: "100"
           - name: STREAMING_PARTIAL_INTERVAL_SECONDS
@@ -39,16 +48,9 @@ properties:
           - name: AUTH_MODE
             value: local
           - name: JWT_SECRET_KEY
-            value: CHANGE_ME  # must equal auth-service's JWT_SECRET_KEY
-          - name: REDIS_URL
-            value: redis://redis:6379/0
-          # Jobs are consumed by the dedicated asr-worker app (KEDA-scaled on
-          # queue length); these replicas serve sync REST + streaming only.
+            secretRef: jwt-secret  # must equal auth-service's JWT_SECRET_KEY
           - name: JOB_WORKER_ENABLED
             value: "false"
-        # v2: liveness and readiness are different questions. A busy replica
-        # is NOT dead: it should stop receiving new traffic (readiness), not
-        # be restarted (liveness).
         probes:
           - type: Liveness
             httpGet:
@@ -68,16 +70,9 @@ properties:
               port: 8000
             periodSeconds: 5
             failureThreshold: 24
-    # Horizontal autoscaling, complementing device_manager.py's vertical
-    # (in-process) adaptation — see docs/06-horizontal-autoscaling.md.
-    # Trigger is HTTP concurrency, not CPU%, because asr-service runs
-    # --workers 1 (module-global Whisper model) and each real transcription
-    # holds that single worker for 1-3s+ — 2 concurrent requests per replica
-    # is already a queue, not a CPU spike, so CPU-based scaling would react
-    # too late.
     scale:
-      minReplicas: 1
-      maxReplicas: 5
+      minReplicas: ${MIN_REPLICAS_ASR}
+      maxReplicas: ${MAX_REPLICAS_ASR}
       rules:
         - name: http-concurrency
           http:

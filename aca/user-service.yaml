@@ -1,25 +1,31 @@
-location: Canada Central
+# Plantilla: deploy.sh sustituye las ${VARIABLES} desde deploy/config.env.
+location: ${LOCATION}
 type: Microsoft.App/containerApps
 properties:
-  managedEnvironmentId: /subscriptions/cfcab251-b0bf-45d7-8a11-b78b26aa6992/resourceGroups/rg-asr-quechua/providers/Microsoft.App/managedEnvironments/aca-asr-quechua
+  managedEnvironmentId: ${ACA_ENV_ID}
   configuration:
     activeRevisionsMode: Single
     ingress:
       external: false
       targetPort: 8000
-      transport: Auto
+      transport: http
+    secrets:
+      - name: database-url
+        value: "postgresql+asyncpg://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}/user_db?ssl=require"
+      - name: smtp-password
+        value: "${SMTP_PASSWORD}"
   template:
     containers:
       - name: user-service
-        image: ghcr.io/zrodrigochirinos/user-service:latest
+        image: ${REGISTRY}/user-service:${IMAGE_TAG}
         resources:
           cpu: 0.5
           memory: 1Gi
         env:
           - name: DATABASE_URL
-            value: postgresql+asyncpg://pgadmin:CHANGE_ME@pg-asr-quechua.postgres.database.azure.com/user_db?ssl=require
+            secretRef: database-url
           - name: AUTH_SERVICE_URL
-            value: http://auth-service
+            value: "${AUTH_SERVICE_URL}"
           - name: EMAIL_CONFIRMATION_TIMEOUT_SECONDS
             value: "30"
           - name: EMAIL_CHANGE_EXPIRY_HOURS
@@ -31,13 +37,13 @@ properties:
           - name: SMTP_PORT
             value: "587"
           - name: SMTP_USER
-            value: CHANGE_ME
+            value: "${SMTP_USER}"
           - name: SMTP_PASSWORD
-            value: CHANGE_ME
+            secretRef: smtp-password
           - name: SMTP_FROM
-            value: CHANGE_ME
+            value: "${SMTP_FROM}"
           - name: FRONTEND_URL
-            value: https://asr-quechua-frontend-b722a.web.app
+            value: "${FRONTEND_URL}"
     scale:
-      minReplicas: 1
+      minReplicas: ${MIN_REPLICAS}
       maxReplicas: 1

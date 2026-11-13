@@ -6,7 +6,16 @@ WORKDIR /app
 # E5 compressed-streaming path (codec_service.py), mirrors audio-processor's Dockerfile.
 RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+# TORCH_INDEX_URL vacío (por defecto): torch==2.4.1 de PyPI, que incluye CUDA
+# 12.1 (necesario para docker-compose.gpu.yml). Para destinos sin GPU (Azure
+# Container Apps) deploy/deploy.sh pasa https://download.pytorch.org/whl/cpu:
+# misma versión 2.4.1 sin CUDA/triton (~4.5 GB menos de imagen). pip considera
+# que 2.4.1+cpu satisface el pin torch==2.4.1 de requirements.txt.
+ARG TORCH_INDEX_URL=
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+      pip install --user --no-cache-dir torch==2.4.1 --index-url "$TORCH_INDEX_URL"; \
+    fi \
+ && pip install --user --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*

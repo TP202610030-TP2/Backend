@@ -47,3 +47,7 @@ experiments/.venv/
 # a local corpus copy, not something to commit. manifest.example.csv stays.
 experiments/e1_dataset_characterization/manifest.csv
 CLAUDE.md
+
+# Despliegue Azure: configuración con secretos y tag de la última build
+deploy/config.env
+deploy/.tags/
