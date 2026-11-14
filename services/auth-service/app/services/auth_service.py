@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import (
     AccountLockedError,
+    EmailDeliveryError,
     InvalidCredentialsError,
     RateLimitExceededError,
     TokenInvalidError,
+    UserNotFoundError,
 )
 from app.core.security import (
     decode_jwt,
@@ -95,15 +97,24 @@ class AuthService:
     async def initiate_recovery(self, email: str) -> None:
         credential = await self._credentials.get_by_email(email)
         if not credential:
-            # Never reveal whether the email is registered
-            return
+            # HU0004 / CP008: the acceptance criterion requires telling the user
+            # that the account was not found. Registration already reveals
+            # whether an email exists (CP002), so the generic answer gave no
+            # real anti-enumeration protection, only a confusing UX.
+            raise UserNotFoundError()
 
         token = generate_recovery_token()
         expires_at = datetime.now(timezone.utc) + timedelta(
             hours=settings.recovery_token_expiry_hours
         )
         await self._recovery.create(token, credential.user_id, email, expires_at)
-        await send_recovery_email(email, token, expires_at.isoformat())
+        try:
+            await send_recovery_email(email, token, expires_at.isoformat())
+        except Exception as exc:
+            # CP007: an SMTP failure used to surface as an unhandled 500 (and
+            # the gateway then reported success). Report it explicitly.
+            logger.error("Recovery email for user %s could not be sent: %s", credential.user_id, exc)
+            raise EmailDeliveryError() from exc
 
     async def reset_password(self, token: str, new_password: str) -> None:
         entry = await self._recovery.get_valid(token)

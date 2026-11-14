@@ -19,6 +19,7 @@ from app.api.dependencies import build_http_client
 from app.core import edge_admission
 from app.core.redis_client import close_redis, get_redis
 from app.core.config import settings
+from app.core.error_handlers import register_error_handlers
 from app.core.response import error_response
 
 
@@ -30,8 +31,36 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
+API_DESCRIPTION = """
+API pública de la **Plataforma ASR Quechua**: reconocimiento automático de voz para quechua.
+
+**Autenticación:** obtén un JWT con `POST /api/v1/auth/login` y envíalo en cada solicitud
+protegida con el header `Authorization: Bearer <token>` (botón *Authorize*).
+
+**Versionado:** todas las rutas están bajo `/api/v1`.
+
+**Errores:** todas las respuestas de error usan el mismo formato JSON (`ErrorResponse`):
+`status`, `errorCode`, `message`, `details` (por parámetro, en errores de validación),
+`requestId` (para ubicar el error en los logs) y `timestamp`.
+
+**Streaming:** la transcripción en tiempo real se realiza por WebSocket en
+`/ws/stream?token=<jwt>&sample_rate=16000&encoding=pcm` (no aparece en Swagger porque
+OpenAPI no describe WebSockets).
+"""
+
+OPENAPI_TAGS = [
+    {"name": "auth", "description": "Registro, inicio y cierre de sesión, recuperación de contraseña"},
+    {"name": "users", "description": "Perfil del usuario autenticado"},
+    {"name": "dashboard", "description": "Resumen del panel principal"},
+    {"name": "transcriptions", "description": "Transcripción síncrona de audio, historial y descargas"},
+    {"name": "jobs", "description": "Transcripción asíncrona mediante cola de trabajos"},
+    {"name": "health", "description": "Estado del servicio"},
+]
+
 app = FastAPI(
     title="ASR Platform - API Gateway",
+    description=API_DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
     version=settings.version,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -75,22 +104,7 @@ app.include_router(streaming_router)
 app.include_router(jobs_router)
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    from fastapi import HTTPException
-
-    if isinstance(exc, HTTPException):
-        detail = exc.detail
-        if isinstance(detail, dict):
-            return error_response(
-                error_code=detail.get("errorCode", "SYSTEM_001"),
-                message=detail.get("message", str(exc)),
-                status_code=exc.status_code,
-                headers=exc.headers,
-            )
-        return error_response("SYSTEM_001", str(detail), exc.status_code, headers=exc.headers)
-
-    return error_response("SYSTEM_001", "An unexpected error occurred", 500)
+register_error_handlers(app)
 
 
 def custom_openapi():
@@ -99,6 +113,8 @@ def custom_openapi():
     schema = get_openapi(
         title=app.title,
         version=app.version,
+        description=app.description,
+        tags=app.openapi_tags,
         routes=app.routes,
     )
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
@@ -113,7 +129,7 @@ def custom_openapi():
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"], summary="Liveness del gateway")
 async def health_check():
     return {
         "status": "healthy",
@@ -124,7 +140,7 @@ async def health_check():
     }
 
 
-@app.get("/ready")
+@app.get("/ready", tags=["health"], summary="Readiness del gateway")
 async def readiness_check():
     """Readiness (vs. liveness /health): the gateway can serve traffic only if
     its own critical dependencies for the configured auth mode are reachable.

@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions import TokenInvalidError
+from unittest.mock import patch
+
+from app.core.exceptions import EmailDeliveryError, TokenInvalidError, UserNotFoundError
 from app.core.security import verify_password
 from app.models.credential import PasswordRecoveryToken
 from app.services.auth_service import AuthService
@@ -44,14 +46,48 @@ async def test_initiate_recovery_creates_token_for_known_email():
     assert call_args.args[2] == "user@example.com"
 
 
-async def test_initiate_recovery_unknown_email_is_silent():
-    """Must not raise or leak whether the email is registered."""
+async def test_initiate_recovery_unknown_email_raises_not_found():
+    """CP008: the user must be told that no account exists for the email."""
     svc = _make_service()
     svc._credentials.get_by_email.return_value = None
 
-    await svc.initiate_recovery("nobody@example.com")
+    with pytest.raises(UserNotFoundError) as exc_info:
+        await svc.initiate_recovery("nobody@example.com")
 
+    assert exc_info.value.status_code == 404
     svc._recovery.create.assert_not_called()
+
+
+async def test_initiate_recovery_sends_email_with_token():
+    svc = _make_service()
+    svc._credentials.get_by_email.return_value = MagicMock(
+        user_id="user-xyz", account_status="active"
+    )
+
+    with patch("app.services.auth_service.send_recovery_email", new=AsyncMock()) as send:
+        await svc.initiate_recovery("user@example.com")
+
+    send.assert_awaited_once()
+    token = svc._recovery.create.call_args.args[0]
+    assert send.call_args.args[0] == "user@example.com"
+    assert send.call_args.args[1] == token
+
+
+async def test_initiate_recovery_smtp_failure_raises_503():
+    """CP007: a delivery failure must not be reported as success."""
+    svc = _make_service()
+    svc._credentials.get_by_email.return_value = MagicMock(
+        user_id="user-xyz", account_status="active"
+    )
+
+    with patch(
+        "app.services.auth_service.send_recovery_email",
+        new=AsyncMock(side_effect=OSError("smtp down")),
+    ):
+        with pytest.raises(EmailDeliveryError) as exc_info:
+            await svc.initiate_recovery("user@example.com")
+
+    assert exc_info.value.status_code == 503
 
 
 async def test_reset_password_valid_token_updates_hash():

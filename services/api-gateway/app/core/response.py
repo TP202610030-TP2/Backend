@@ -15,15 +15,22 @@ def success_response(data: dict, status_code: int = 200) -> JSONResponse:
 
 
 def error_response(
-    error_code: str, message: str, status_code: int, headers: dict | None = None
+    error_code: str,
+    message: str,
+    status_code: int,
+    headers: dict | None = None,
+    details: list | None = None,
+    request_id: str | None = None,
 ) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        headers=headers,
-        content={
-            "status": "error",
-            "errorCode": error_code,
-            "message": message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+    content = {
+        "status": "error",
+        "errorCode": error_code,
+        "message": message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if details:
+        content["details"] = details
+    if request_id:
+        content["requestId"] = request_id
+        headers = {**(headers or {}), "X-Request-Id": request_id}
+    return JSONResponse(status_code=status_code, headers=headers, content=content)

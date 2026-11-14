@@ -10,9 +10,15 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def email_enabled() -> bool:
+    return bool(settings.smtp_user and settings.smtp_password)
+
+
 def _send_sync(to: str, subject: str, html_body: str) -> None:
     msg = MIMEMultipart("alternative")
-    msg["From"] = settings.smtp_from
+    # Gmail only relays mail whose sender is the authenticated account (or a
+    # verified alias); fall back to it when SMTP_FROM is not set.
+    msg["From"] = settings.smtp_from or settings.smtp_user
     msg["To"] = to
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html", "utf-8"))
@@ -20,14 +26,20 @@ def _send_sync(to: str, subject: str, html_body: str) -> None:
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
         smtp.starttls()
         smtp.login(settings.smtp_user, settings.smtp_password)
-        smtp.sendmail(settings.smtp_from, [to], msg.as_string())
+        smtp.sendmail(settings.smtp_from or settings.smtp_user, [to], msg.as_string())
 
 
 async def _send(to: str, subject: str, html_body: str) -> None:
-    if not settings.smtp_user:
-        logger.info("[MAIL-STUB] To=%s Subject=%r", to, subject)
+    if not email_enabled():
+        # Stub mode: nothing is delivered. Logged as WARNING so that it is
+        # visible in the container logs (this is why CP007 received no mail).
+        logger.warning(
+            "[MAIL-STUB] SMTP_USER/SMTP_PASSWORD not configured; email NOT sent. To=%s Subject=%r",
+            to,
+            subject,
+        )
         return
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         await loop.run_in_executor(None, partial(_send_sync, to, subject, html_body))
     except Exception as exc:

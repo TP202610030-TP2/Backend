@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_current_user, get_http_client
 from app.core.config import settings
+from app.schemas import error_responses
 
 router = APIRouter(tags=["dashboard"])
 
@@ -35,7 +36,15 @@ async def _health(http: httpx.AsyncClient, url: str) -> str:
     return "unavailable"
 
 
-@router.get("/api/v1/dashboard")
+@router.get(
+    "/api/v1/dashboard",
+    summary="Panel principal",
+    description=(
+        "Resumen para el panel del usuario: datos del perfil, total de transcripciones y estado "
+        "de los servicios. Si algún servicio no responde en 500 ms se muestra como `unavailable`."
+    ),
+    responses=error_responses(401),
+)
 async def dashboard(
     http: httpx.AsyncClient = Depends(get_http_client),
     user: dict = Depends(get_current_user),
