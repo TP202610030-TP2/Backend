@@ -12,6 +12,9 @@ from app.schemas import error_responses
 router = APIRouter(tags=["dashboard"])
 
 _DASHBOARD_TIMEOUT = 0.5  # 500 ms
+# The status-only endpoint is polled by the frontend while a service is still
+# waking up (ACA scale-to-zero), so it can afford a longer per-service budget.
+_STATUS_TIMEOUT = 2.0
 
 
 async def _safe_get(http: httpx.AsyncClient, url: str, **kwargs) -> dict | None:
@@ -26,9 +29,9 @@ async def _safe_get(http: httpx.AsyncClient, url: str, **kwargs) -> dict | None:
     return None
 
 
-async def _health(http: httpx.AsyncClient, url: str) -> str:
+async def _health(http: httpx.AsyncClient, url: str, timeout: float = _DASHBOARD_TIMEOUT) -> str:
     try:
-        resp = await asyncio.wait_for(http.get(f"{url}/health"), timeout=_DASHBOARD_TIMEOUT)
+        resp = await asyncio.wait_for(http.get(f"{url}/health"), timeout=timeout)
         if resp.status_code == 200:
             return resp.json().get("status", "unknown")
     except Exception:
@@ -95,6 +98,40 @@ async def dashboard(
                     "transcription-manager": trans_health,
                 },
             },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
+async def _services_status(http: httpx.AsyncClient, timeout: float) -> dict:
+    names_urls = {
+        "auth": settings.auth_service_url,
+        "audio-processor": settings.audio_processor_url,
+        "asr": settings.asr_service_url,
+        "transcription-manager": settings.transcription_manager_url,
+    }
+    results = await asyncio.gather(*(_health(http, url, timeout) for url in names_urls.values()))
+    return dict(zip(names_urls, results))
+
+
+@router.get(
+    "/api/v1/dashboard/services",
+    summary="Estado de los servicios",
+    description=(
+        "Consulta solo el estado de los servicios internos (`healthy` o `unavailable`). "
+        "Es más liviano que `/api/v1/dashboard` y el panel lo vuelve a consultar mientras "
+        "algún servicio se está iniciando."
+    ),
+    responses=error_responses(401),
+)
+async def services_status(
+    http: httpx.AsyncClient = Depends(get_http_client),
+    user: dict = Depends(get_current_user),
+):
+    return JSONResponse(
+        content={
+            "status": "success",
+            "data": {"services": await _services_status(http, _STATUS_TIMEOUT)},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )

@@ -77,3 +77,36 @@ def test_dashboard_requires_auth():
     with TestClient(app, raise_server_exceptions=False) as c:
         resp = c.get("/api/v1/dashboard")
     assert resp.status_code == 403
+
+
+def test_services_status_endpoint_reports_each_service():
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from app.api.dependencies import get_current_user, get_http_client
+    from app.main import app
+
+    async def fake_get(url, **kwargs):
+        if "asr" in url:
+            raise httpx.ConnectError("waking up")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"status": "healthy"}
+        return resp
+
+    http = AsyncMock(spec=httpx.AsyncClient)
+    http.get.side_effect = fake_get
+    app.dependency_overrides[get_http_client] = lambda: http
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u", "email": "e", "token": "t"}
+    try:
+        with TestClient(app) as c:
+            resp = c.get("/api/v1/dashboard/services")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    services = resp.json()["data"]["services"]
+    assert services["asr"] == "unavailable"
+    assert services["auth"] == services["audio-processor"] == services["transcription-manager"] == "healthy"
